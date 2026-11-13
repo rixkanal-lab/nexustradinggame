@@ -1,0 +1,451 @@
+
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nexus Trading</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#090d18;color:#edf2ff;font-family:Arial,sans-serif}
+header{padding:18px 5%;background:#111a2b;border-bottom:1px solid #263650;display:flex;justify-content:space-between;align-items:center}
+h1{margin:0;color:#58d6ff;font-size:25px}
+main{max-width:1150px;margin:25px auto;padding:0 16px}
+.card{background:#111a2b;border:1px solid #263650;border-radius:13px;padding:18px;margin-bottom:17px}
+input,button{padding:12px;border-radius:8px;border:1px solid #344766;background:#0b1322;color:white;margin:4px 0}
+input{width:100%;max-width:360px}
+button{background:#087eae;border:0;cursor:pointer;font-weight:bold}
+button:hover{background:#079bd2}
+button.secondary{background:#34445e}
+button.sell{background:#b94c5b}
+.hidden{display:none!important}
+.muted{color:#9baac4}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+.asset{background:#0b1424;border:1px solid #293c59;padding:13px;border-radius:10px}
+.price{font-size:20px;font-weight:bold;color:#60dbb0}
+table{width:100%;border-collapse:collapse}
+td,th{text-align:left;padding:10px;border-bottom:1px solid #293c59}
+.small{font-size:12px}
+#message{padding:10px;color:#65dcb4}
+</style>
+</head>
+<body>
+<header>
+  <h1>◆ NEXUS TRADING</h1>
+  <span id="userLabel" class="muted">Nepřihlášen</span>
+</header>
+<main>
+  <div id="message"></div>
+
+  <section id="auth" class="card">
+    <h2>Vítej v Nexus Trading</h2>
+    <p class="muted">Přihlas se nebo si vytvoř nový účet.</p>
+    <input id="email" type="email" placeholder="E-mail">
+    <input id="password" type="password" placeholder="Heslo">
+    <br>
+    <button onclick="signIn()">Přihlásit se</button>
+    <button class="secondary" onclick="signUp()">Vytvořit účet</button>
+    <p class="small muted">Používej vlastní účet. Heslo nikomu neposílej.</p>
+  </section>
+
+  <section id="lobby" class="hidden">
+    <div class="card">
+      <h2>Herní místnosti</h2>
+      <p class="muted">Vyber si místnost nebo založ vlastní trh.</p>
+      <input id="roomName" placeholder="Název nové místnosti">
+      <button onclick="createRoom()">＋ Vytvořit místnost</button>
+      <div id="rooms"></div>
+    </div>
+  </section>
+
+  <section id="game" class="hidden">
+    <div class="card">
+      <button class="secondary" onclick="leaveRoom()">← Zpět do místností</button>
+      <h2 id="roomTitle">Trh</h2>
+      <div class="grid">
+        <div class="asset"><span class="muted">Hotovost</span><h2 id="cash">$0</h2></div>
+        <div class="asset"><span class="muted">Herní den</span><h2 id="day">1</h2></div>
+        <div class="asset"><span class="muted">Hráči</span><h2 id="players">0</h2></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Kryptoměnová burza</h2>
+      <input id="search" placeholder="Hledat kryptoměnu..." oninput="renderAssets()">
+      <div id="assets" class="grid"></div>
+    </div>
+
+    <div class="card">
+      <h2>Moje portfolio</h2>
+      <div id="portfolio"></div>
+    </div>
+
+    <div class="card">
+      <h2>Klany</h2>
+      <input id="clanName" placeholder="Název nového klanu">
+      <button onclick="createClan()">Založit klan ($500)</button>
+      <div id="clans"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const SUPABASE_URL = "https://wzqjogcprdsnxgjzuldv.supabase.co";
+const SUPABASE_KEY = "sb_publishable_rq27Kcy_Vm2hc0HyFyBiwg_tXH55idV";
+
+const db = window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+let user = null;
+let room = null;
+let member = null;
+let market = [];
+let members = [];
+let clans = [];
+let channel = null;
+let tickTimer = null;
+
+const names = [
+["BTC","Bitcoin","Digitální měna",65000],
+["ETH","Ethereum","Blockchain",3200],
+["SOL","Solana","Blockchain",145],
+["XRP","XRP","Platby",0.65],
+["ADA","Cardano","Blockchain",0.55],
+["DOGE","Dogecoin","Meme",0.15],
+["DOT","Polkadot","Blockchain",7],
+["AVAX","Avalanche","Blockchain",35],
+["LINK","Chainlink","Data",15],
+["LTC","Litecoin","Platby",90],
+["BNB","Binance Coin","Blockchain",580],
+["TRX","TRON","Blockchain",0.12],
+["XLM","Stellar","Platby",0.11],
+["ATOM","Cosmos","Blockchain",9],
+["NEAR","NEAR Protocol","Blockchain",5],
+["UNI","Uniswap","DeFi",8],
+["AAVE","Aave","DeFi",100],
+["MKR","Maker","DeFi",2500],
+["ETC","Ethereum Classic","Blockchain",25],
+["FIL","Filecoin","Data",5],
+["ALGO","Algorand","Blockchain",0.2],
+["VET","VeChain","Blockchain",0.04],
+["ICP","Internet Computer","Data",12],
+["SAND","The Sandbox","Gaming",0.4],
+["MANA","Decentraland","Gaming",0.5],
+["AXS","Axie Infinity","Gaming",7],
+["GRT","The Graph","Data",0.2],
+["EOS","EOS","Blockchain",0.8],
+["XTZ","Tezos","Blockchain",1],
+["THETA","Theta","Data",2],
+["FLOW","Flow","Gaming",0.8],
+["APE","ApeCoin","Meme",1.5],
+["SHIB","Shiba Inu","Meme",0.00002],
+["PEPE","Pepe","Meme",0.00001],
+["ARB","Arbitrum","Blockchain",1],
+["OP","Optimism","Blockchain",2],
+["INJ","Injective","DeFi",25],
+["SUI","Sui","Blockchain",1.5],
+["SEI","Sei","Blockchain",0.5],
+["KAS","Kaspa","Blockchain",0.15]
+];
+
+const extras = [
+"Nova","Quantum","Galaxy","Nebula","Orbit","Cosmos","Pixel","Cyber",
+"Matrix","Future","Hyper","Solar","Lunar","Meteor","Astro","Nexus"
+];
+
+function makeAssets(){
+ const result = names.map(x=>({
+  ticker:x[0],name:x[1],category:x[2],price:x[3],
+  supply:5000,history:[x[3]]
+ }));
+ for(let i=40;i<200;i++){
+  const ticker="COIN"+String(i+1).padStart(3,"0");
+  const name=extras[i%extras.length]+" "+(i+1);
+  const price=Number((0.5+((i*37)%950)).toFixed(2));
+  result.push({
+   ticker,name,category:"Experimentální",price,
+   supply:5000,history:[price]
+  });
+ }
+ return result;
+}
+
+function msg(text){
+ document.getElementById("message").textContent=text;
+}
+
+function show(id){
+ ["auth","lobby","game"].forEach(x=>
+  document.getElementById(x).classList.add("hidden"));
+ document.getElementById(id).classList.remove("hidden");
+}
+
+function money(value){
+ return "$"+Number(value||0).toLocaleString("cs-CZ",{
+  minimumFractionDigits:2,maximumFractionDigits:2
+ });
+}
+
+async function signUp(){
+ const email=document.getElementById("email").value.trim();
+ const password=document.getElementById("password").value;
+ if(!email||password.length<8)return msg("Vyplň e-mail a heslo alespoň 8 znaků.");
+ const {error}=await db.auth.signUp({email,password});
+ if(error)return msg(error.message);
+ msg("Registrace odeslána. Pokud je vyžadováno potvrzení e-mailu, otevři zprávu v e-mailové schránce.");
+}
+
+async function signIn(){
+ const email=document.getElementById("email").value.trim();
+ const password=document.getElementById("password").value;
+ const {error}=await db.auth.signInWithPassword({email,password});
+ if(error)return msg(error.message);
+ await start();
+}
+
+async function signOut(){
+ await db.auth.signOut();
+ user=null;room=null;
+ show("auth");
+ document.getElementById("userLabel").textContent="Nepřihlášen";
+ msg("Byl jsi odhlášen.");
+}
+
+async function start(){
+ const {data}=await db.auth.getUser();
+ user=data.user;
+ if(!user){show("auth");return;}
+ document.getElementById("userLabel").textContent=user.email;
+ show("lobby");
+ await loadRooms();
+}
+
+async function loadRooms(){
+ const {data,error}=await db.from("nexus_rooms")
+  .select("*").order("created_at",{ascending:false});
+ if(error)return msg(error.message);
+ const box=document.getElementById("rooms");
+ box.innerHTML="";
+ (data||[]).forEach(r=>{
+  const el=document.createElement("div");
+  el.className="asset";
+  const title=document.createElement("b");
+  title.textContent=r.name;
+  const info=document.createElement("p");
+  info.className="muted small";
+  info.textContent="Herní den "+r.game_day;
+  const btn=document.createElement("button");
+  btn.textContent="Vstoupit";
+  btn.onclick=()=>joinRoom(r);
+  el.append(title,info,btn);
+  box.append(el);
+ });
+ if(!data?.length)box.textContent="Zatím tu nejsou žádné místnosti.";
+}
+
+async function createRoom(){
+ const name=document.getElementById("roomName").value.trim();
+ if(name.length<2)return msg("Název musí mít alespoň 2 znaky.");
+ msg("Vytvářím místnost a 200 kryptoměn...");
+ const {data,error}=await db.rpc("nexus_create_room",{
+  p_name:name,p_assets:makeAssets()
+ });
+ if(error)return msg(error.message);
+ await loadRooms();
+ await joinRoom({id:data,name});
+}
+
+async function joinRoom(r){
+ room=r;
+ const {error}=await db.rpc("nexus_join_room",{
+  p_room_id:room.id,
+  p_display_name:(user.email.split("@")[0]||"Hráč").slice(0,24)
+ });
+ if(error)return msg(error.message);
+ document.getElementById("roomTitle").textContent=room.name;
+ show("game");
+ await refreshGame();
+ subscribeRoom();
+ startMarketTimer();
+}
+
+async function refreshGame(){
+ if(!room)return;
+ const [a,b,c,d]=await Promise.all([
+  db.from("nexus_market_assets").select("*").eq("room_id",room.id).order("ticker"),
+  db.from("nexus_room_members").select("*").eq("room_id",room.id),
+  db.from("nexus_clans").select("*").eq("room_id",room.id),
+  db.from("nexus_rooms").select("*").eq("id",room.id).single()
+ ]);
+ if(a.error||b.error||c.error||d.error)
+  return msg(a.error?.message||b.error?.message||c.error?.message||d.error?.message);
+ market=a.data||[];
+ members=b.data||[];
+ clans=c.data||[];
+ member=members.find(x=>x.user_id===user.id);
+ document.getElementById("cash").textContent=money(member?.cash);
+ document.getElementById("day").textContent=d.data.game_day;
+ document.getElementById("players").textContent=members.length;
+ renderAssets();
+ renderPortfolio();
+ renderClans();
+}
+
+function renderAssets(){
+ const q=document.getElementById("search").value.toLowerCase();
+ const box=document.getElementById("assets");
+ box.innerHTML="";
+ market.filter(a=>(a.name+" "+a.ticker).toLowerCase().includes(q))
+ .forEach(a=>{
+  const el=document.createElement("div");
+  el.className="asset";
+  const title=document.createElement("b");
+  title.textContent=a.name+" ("+a.ticker+")";
+  const category=document.createElement("p");
+  category.className="muted small";
+  category.textContent=a.category;
+  const price=document.createElement("div");
+  price.className="price";
+  price.textContent=money(a.price);
+  const qty=document.createElement("input");
+  qty.type="number";qty.min="0.0001";qty.step="any";
+  qty.value="1";qty.placeholder="Počet kusů";
+  const buy=document.createElement("button");
+  buy.textContent="Koupit";
+  buy.onclick=()=>trade(a.ticker,qty.value,"BUY");
+  const sell=document.createElement("button");
+  sell.textContent="Prodat";
+  sell.className="sell";
+  sell.onclick=()=>trade(a.ticker,qty.value,"SELL");
+  el.append(title,category,price,qty,buy,sell);
+  box.append(el);
+ });
+}
+
+function renderPortfolio(){
+ const box=document.getElementById("portfolio");
+ box.innerHTML="";
+ if(!member)return;
+ const positions=member.positions||{};
+ let found=0;
+ Object.entries(positions).forEach(([ticker,qty])=>{
+  const a=market.find(x=>x.ticker===ticker);
+  if(!a||Number(qty)<=0)return;
+  found++;
+  const p=document.createElement("p");
+  p.textContent=ticker+": "+qty+" kusů – "+money(Number(qty)*Number(a.price));
+  box.append(p);
+ });
+ if(!found)box.textContent="Zatím nic nevlastníš.";
+}
+
+async function trade(ticker,qty,side){
+ const amount=Number(qty);
+ if(!Number.isFinite(amount)||amount<=0)return msg("Zadej platné množství.");
+ const {error}=await db.rpc("nexus_trade",{
+  p_room_id:room.id,p_ticker:ticker,p_qty:amount,p_side:side
+ });
+ if(error)return msg(error.message);
+ msg(side==="BUY"?"Nákup dokončen.":"Prodej dokončen.");
+ await refreshGame();
+}
+
+function renderClans(){
+ const box=document.getElementById("clans");
+ box.innerHTML="";
+ clans.forEach(c=>{
+  const el=document.createElement("div");
+  el.className="asset";
+  const title=document.createElement("b");
+  title.textContent=c.name;
+  const info=document.createElement("p");
+  info.className="muted small";
+  info.textContent="Banka klanu: "+money(c.bank);
+  const btn=document.createElement("button");
+  btn.textContent=member?.clan_id===c.id?"Jsi členem":"Připojit se";
+  btn.disabled=!!member?.clan_id;
+  btn.onclick=()=>joinClan(c.id);
+  el.append(title,info,btn);
+  box.append(el);
+ });
+ if(!clans.length)box.textContent="Zatím nebyl vytvořen žádný klan.";
+ if(member?.clan_id){
+  const leave=document.createElement("button");
+  leave.className="secondary";
+  leave.textContent="Opustit klan";
+  leave.onclick=leaveClan;
+  box.append(leave);
+ }
+}
+
+async function createClan(){
+ const name=document.getElementById("clanName").value.trim();
+ if(name.length<2)return msg("Název klanu je příliš krátký.");
+ const {error}=await db.rpc("nexus_create_clan",{
+  p_room_id:room.id,p_name:name,p_perk_draw:false,p_perk_lib:false
+ });
+ if(error)return msg(error.message);
+ msg("Klan byl založen.");
+ await refreshGame();
+}
+
+async function joinClan(id){
+ const {error}=await db.rpc("nexus_join_clan",{
+  p_room_id:room.id,p_clan_id:id
+ });
+ if(error)return msg(error.message);
+ await refreshGame();
+}
+
+async function leaveClan(){
+ const {error}=await db.rpc("nexus_leave_clan",{
+  p_room_id:room.id
+ });
+ if(error)return msg(error.message);
+ await refreshGame();
+}
+
+function subscribeRoom(){
+ if(channel)db.removeChannel(channel);
+ channel=db.channel("nexus-"+room.id)
+ .on("postgres_changes",{event:"*",schema:"public",table:"nexus_market_assets",filter:"room_id=eq."+room.id},refreshGame)
+ .on("postgres_changes",{event:"*",schema:"public",table:"nexus_room_members",filter:"room_id=eq."+room.id},refreshGame)
+ .on("postgres_changes",{event:"*",schema:"public",table:"nexus_clans",filter:"room_id=eq."+room.id},refreshGame)
+ .on("postgres_changes",{event:"*",schema:"public",table:"nexus_rooms",filter:"id=eq."+room.id},refreshGame)
+ .subscribe();
+}
+
+function startMarketTimer(){
+ clearInterval(tickTimer);
+ tickTimer=setInterval(async()=>{
+  if(!room||!user)return;
+  const {data}=await db.from("nexus_rooms").select("owner_id").eq("id",room.id).single();
+  if(data?.owner_id===user.id){
+   const {error}=await db.rpc("nexus_tick_market",{p_room_id:room.id});
+   if(error)msg(error.message);
+  }
+ },120000);
+}
+
+async function leaveRoom(){
+ clearInterval(tickTimer);
+ if(channel)await db.removeChannel(channel);
+ channel=null;room=null;member=null;
+ show("lobby");
+ await loadRooms();
+}
+
+db.auth.onAuthStateChange((event,session)=>{
+ if(session?.user){
+  user=session.user;
+  setTimeout(start,0);
+ }else{
+  user=null;
+  show("auth");
+  document.getElementById("userLabel").textContent="Nepřihlášen";
+ }
+});
+
+start();
+</script>
+</body>
+</html>
